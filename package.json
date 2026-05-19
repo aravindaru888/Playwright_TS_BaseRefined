@@ -1,0 +1,44 @@
+{
+  "name": "enterprise-playwright-framework",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Simple, scalable, enterprise-grade Playwright automation framework for ecommerce applications.",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "test:smoke": "playwright test --grep @smoke",
+    "test:auth": "playwright test tests/auth",
+    "test:cart": "playwright test tests/cart",
+    "test:search": "playwright test tests/search",
+    "test:navigation": "playwright test tests/navigation",
+    "test:chrome": "playwright test --project=chromium",
+    "test:firefox": "playwright test --project=firefox",
+    "test:qa": "cross-env TEST_ENV=qa playwright test",
+    "test:staging": "cross-env TEST_ENV=staging playwright test",
+    "test:prodlike": "cross-env TEST_ENV=prod playwright test",
+    "test:report": "playwright show-report",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "typecheck": "tsc --noEmit",
+    "auth:setup": "playwright test tests/auth/auth.setup.ts --project=setup"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2",
+    "@types/node": "^24.0.1",
+    "@typescript-eslint/eslint-plugin": "^8.34.0",
+    "@typescript-eslint/parser": "^8.34.0",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.5.0",
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^10.1.5",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3"
+  }
+}

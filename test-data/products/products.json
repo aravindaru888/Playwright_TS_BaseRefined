@@ -1,0 +1,12 @@
+{
+  "featuredProduct": {
+    "name": "Sony vaio i5",
+    "category": "Laptops",
+    "price": "$790"
+  },
+  "alternateProduct": {
+    "name": "Samsung galaxy s6",
+    "category": "Phones",
+    "price": "$360"
+  }
+}

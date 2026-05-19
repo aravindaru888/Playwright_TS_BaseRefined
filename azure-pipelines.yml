@@ -1,0 +1,48 @@
+trigger:
+  - main
+  - master
+
+pr:
+  - main
+  - master
+
+pool:
+  vmImage: ubuntu-latest
+
+strategy:
+  matrix:
+    chromium:
+      PLAYWRIGHT_PROJECT: chromium
+    firefox:
+      PLAYWRIGHT_PROJECT: firefox
+
+steps:
+  - checkout: self
+
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+    displayName: Use Node.js 20
+
+  - script: npm ci
+    displayName: Install dependencies
+
+  - script: npx playwright install --with-deps
+    displayName: Install Playwright browsers
+
+  - script: npx playwright test --project=$(PLAYWRIGHT_PROJECT)
+    displayName: Run Playwright tests
+    env:
+      CI: true
+      TEST_ENV: qa
+      BASE_URL: $(BASE_URL)
+      USERNAME: $(USERNAME)
+      PASSWORD: $(PASSWORD)
+
+  - task: PublishPipelineArtifact@1
+    condition: always()
+    inputs:
+      targetPath: reports
+      artifact: playwright-$(PLAYWRIGHT_PROJECT)-reports
+      publishLocation: pipeline
+    displayName: Publish Playwright reports

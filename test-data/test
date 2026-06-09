@@ -1,0 +1,404 @@
+Let me first clearly establish the chunk breakdown before writing the SQLs.
+
+## Chunk Strategy
+
+```
+Total entries needed = 7,986,513
+Phase 1 (YEARS_OFFSET=6, days 1095): 3,993,257 entries → 3,647/day
+Phase 2 (YEARS_OFFSET=3, days 1095): 3,993,256 entries → 3,647/day
+```
+
+Per entry inserts:
+- 1 BULK_PAYMENTS
+- 1 BULK_PAYMENT_ACCOUNTS (96%)
+- ~1.57 BULK_PAYMENT_FILES
+- ~1.96 BULK_PAYMENT_SPLIT_DETAILS
+- 18 BULK_PAYMENT_TRANSACTIONS
+- ~1.41 BULK_PAYMENT_TXN_CUSTOM_VALUES (8% of 18 txns)
+- 1 BULK_PAYMENT_CUSTOM_HEADERS (69%)
+
+**Per day (3647 entries) = ~3647 + 3501 + 5705 + 7148 + 65646 + 5143 + 2516 = ~93,306 inserts/day**
+
+**Per phase total = ~93,306 × 1095 = ~102M inserts**
+
+---
+## ⚠️ Performance Warning
+
+This is extremely heavy. At typical Oracle insert speeds of **5,000-10,000 rows/sec**:
+
+```
+102M inserts / 5,000 rows per sec = ~20,400 seconds = ~5.6 hours per phase
+Total for both phases = ~11 hours
+```
+
+### Recommendation — Break into 6 chunks instead
+
+```
+6 chunks × 365 days × 3647 entries = ~7,986,510 entries total
+Each chunk = ~365 days, ~34M inserts, ~1.9 hours
+```
+
+---
+## Chunk Plan
+
+| Chunk | NUM_DAYS | YEARS_OFFSET | Covers |
+|-------|----------|--------------|--------|
+| 1 | 365 | 6 | Year 6 ago |
+| 2 | 365 | 5 | Year 5 ago |
+| 3 | 365 | 4 | Year 4 ago |
+| 4 | 365 | 3 | Year 3 ago |
+| 5 | 365 | 2 | Year 2 ago |
+| 6 | 365 | 1 | Year 1 ago |
+
+---
+## Full SQL — Copy-paste for each chunk, only change YEARS_OFFSET
+
+```sql
+-- =====================================================
+-- CHUNK 1: YEARS_OFFSET = 6 (change per chunk: 6,5,4,3,2,1)
+-- =====================================================
+DEFINE NUM_DAYS = 365
+DEFINE NUM_ENTRIES_PER_DAY = 3647
+DEFINE YEARS_OFFSET = 6        -- <-- ONLY CHANGE THIS PER CHUNK
+
+DECLARE
+    v_num_days          NUMBER := &NUM_DAYS;
+    v_num_entries_per_day NUMBER := &NUM_ENTRIES_PER_DAY;
+    v_years_offset      NUMBER := &YEARS_OFFSET;
+    v_counter           NUMBER := 1;
+    v_day_counter       NUMBER;
+    v_entry_counter     NUMBER;
+    v_ref_id            VARCHAR2(30);
+    v_split_ref_id      VARCHAR2(30);
+    v_split_ref_id_r    VARCHAR2(30);
+    v_display_id        VARCHAR2(16);
+    v_transaction_date  DATE;
+    v_created_at        TIMESTAMP WITH TIME ZONE;
+    v_updated_at        TIMESTAMP WITH TIME ZONE;
+
+BEGIN
+    FOR v_day_counter IN 1..v_num_days LOOP
+        FOR v_entry_counter IN 1..v_num_entries_per_day LOOP
+
+            -- Dates
+            v_transaction_date := TRUNC(SYSDATE) - (v_num_days - v_day_counter);
+            v_created_at := SYSTIMESTAMP - NUMTODSINTERVAL(
+                (v_num_days - v_day_counter) + (v_years_offset * 365), 'DAY');
+            v_updated_at := SYSTIMESTAMP - NUMTODSINTERVAL(
+                (v_num_days - v_day_counter) + (v_years_offset * 365), 'DAY');
+
+            -- IDs
+            v_ref_id         := '3Ea7' || LPAD(v_counter, 10, '0') 
+                                || CHR(65 + MOD(v_counter, 26)) 
+                                || LPAD(v_counter, 9, '0');
+            v_split_ref_id   := LPAD(v_counter * 2 - 1, 16, '0');
+            v_split_ref_id_r := v_split_ref_id || 'R';
+            v_display_id     := 'OPT' || LPAD(v_counter, 10, '0');
+
+            -- =====================================================
+            -- 1. BULK_PAYMENTS
+            -- =====================================================
+            INSERT INTO BULK_PAYMENTS (
+                REFERENCE_ID, STATUS, FILE_NAME, NOTES, DEBIT_MODE,
+                APPROVAL_ID, DISPLAY_ID, CREATED_AT, UPDATED_AT,
+                SOURCE_SYSTEM_ID, SOURCE_REFERENCE_ID, CREATED_BY,
+                GROUP_ID, IS_CREDIT_ADVICE, SOURCE_TYPE_ID,
+                PURPOSE_CODE, PURPOSE_CODE_DESC,
+                MOBILE_NUMBER, ENTITY_UCIC, ENTITY_NAME,
+                IS_EXTRACTION_COMPLETE
+            ) VALUES (
+                v_ref_id,
+                CASE MOD(v_counter, 3)
+                    WHEN 0 THEN 'PROCESSING'
+                    WHEN 1 THEN 'SENT'
+                    ELSE 'INITIATED'
+                END,
+                'OnscreenPayment_' || TO_CHAR(v_transaction_date, 'DDMMYYYY') || '.xlsx',
+                'MDMC',
+                '1',
+                '3Ea7ScSym2u0EYj55tagVX4FdX2',
+                v_display_id,
+                v_created_at,
+                v_updated_at,
+                1,
+                LPAD(10355180105 + v_counter, 10, '0'),
+                CASE MOD(v_counter, 5)
+                    WHEN 0 THEN 'B K Films'
+                    WHEN 1 THEN 'ABC Corporation'
+                    WHEN 2 THEN 'XYZ Industries'
+                    WHEN 3 THEN 'PQR Services'
+                    ELSE 'Global Enterprises'
+                END,
+                LPAD(10355180105 + v_counter, 10, '0'),
+                'Y',
+                2,
+                'Salary Pay',
+                'Salary',
+                '94563010' || LPAD(MOD(v_counter, 100), 2, '0'),
+                LPAD(10355518492 + MOD(v_counter, 1000), 10, '0'),
+                CASE MOD(v_counter, 5)
+                    WHEN 0 THEN 'B K Films'
+                    WHEN 1 THEN 'ABC Corporation'
+                    WHEN 2 THEN 'XYZ Industries'
+                    WHEN 3 THEN 'PQR Services'
+                    ELSE 'Global Enterprises'
+                END,
+                1
+            );
+
+            -- =====================================================
+            -- 2. BULK_PAYMENT_ACCOUNTS (96% of entries)
+            -- =====================================================
+            IF MOD(v_counter, 25) != 0 THEN
+                INSERT INTO BULK_PAYMENT_ACCOUNTS (
+                    ACCOUNT_NUMBER, AMOUNT, BULK_PAYMENTS_REFERENCE_ID,
+                    CREATED_AT, ACCOUNT_NAME, TRANSACTIONS_COUNT,
+                    MONTH_WISE_TRANSACTIONS_COUNT
+                ) VALUES (
+                    '214002000015',
+                    ROUND(DBMS_RANDOM.VALUE(10000, 500000), 2),
+                    v_ref_id,
+                    SYSTIMESTAMP - NUMTODSINTERVAL(
+                        (v_num_days - v_day_counter) + (v_years_offset * 365), 'DAY'),
+                    CASE MOD(v_counter, 5)
+                        WHEN 0 THEN 'B K Films - Mumbai'
+                        WHEN 1 THEN 'ABC Corporation - Mumbai'
+                        WHEN 2 THEN 'XYZ Industries - Mumbai'
+                        WHEN 3 THEN 'PQR Services - Mumbai'
+                        ELSE 'Global Enterprises - Mumbai'
+                    END,
+                    MOD(v_counter, 100) + 1,
+                    '{' || TO_CHAR(v_transaction_date, 'MON-YYYY') 
+                        || ':' || ((&NUM_ENTRIES_PER_DAY * 3) + 1) || '}'
+                );
+            END IF;
+
+            -- =====================================================
+            -- 3. BULK_PAYMENT_FILES (1 always + 57% get 2nd file)
+            -- =====================================================
+            INSERT INTO BULK_PAYMENT_FILES (
+                ID, BULK_PAYMENTS_REFERENCE_ID, FILE_CONTENT, FILE_NAME
+            ) VALUES (
+                v_counter * 1000,
+                v_ref_id,
+                TO_BLOB(UTL_RAW.CAST_TO_RAW('File content for ' || v_ref_id)),
+                'file1.txt'
+            );
+
+            IF MOD(v_counter, 100) < 57 THEN
+                INSERT INTO BULK_PAYMENT_FILES (
+                    ID, BULK_PAYMENTS_REFERENCE_ID, FILE_CONTENT, FILE_NAME
+                ) VALUES (
+                    v_counter * 1000 + 1,
+                    v_ref_id,
+                    TO_BLOB(UTL_RAW.CAST_TO_RAW('File content for ' || v_split_ref_id)),
+                    'file2.txt'
+                );
+            END IF;
+
+            -- =====================================================
+            -- 4. BULK_PAYMENT_SPLIT_DETAILS (NEFT always + RTGS 96%)
+            -- =====================================================
+            INSERT INTO BULK_PAYMENT_SPLIT_DETAILS (
+                RAIL_ROAD, TRANSACTION_DATE, SPLIT_REFERENCE_ID,
+                BULK_PAYMENTS_REFERENCE_ID, STATUS, CREATED_AT, UPDATED_AT
+            ) VALUES (
+                'NEFT',
+                v_transaction_date,
+                v_split_ref_id,
+                v_ref_id,
+                CASE MOD(v_counter, 2)
+                    WHEN 0 THEN 'NOT_PROCESSED'
+                    ELSE 'SENT'
+                END,
+                SYSTIMESTAMP - NUMTODSINTERVAL(
+                    (v_num_days - v_day_counter) + (v_years_offset * 365), 'DAY')
+                    + NUMTODSINTERVAL(2, 'SECOND'),
+                SYSTIMESTAMP - NUMTODSINTERVAL(
+                    (v_num_days - v_day_counter) + (v_years_offset * 365), 'DAY')
+            );
+
+            IF MOD(v_counter, 100) < 96 THEN
+                INSERT INTO BULK_PAYMENT_SPLIT_DETAILS (
+                    RAIL_ROAD, TRANSACTION_DATE, SPLIT_REFERENCE_ID,
+                    BULK_PAYMENTS_REFERENCE_ID, STATUS, CREATED_AT, UPDATED_AT
+                ) VALUES (
+                    'RTGS',
+                    v_transaction_date,
+                    LPAD(v_counter * 2, 16, '0'),
+                    v_ref_id,
+                    CASE MOD(v_counter, 2)
+                        WHEN 0 THEN 'NOT_PROCESSED'
+                        ELSE 'SENT'
+                    END,
+                    SYSTIMESTAMP - NUMTODSINTERVAL(
+                        (v_num_days - v_day_counter) + (v_years_offset * 365), 'DAY')
+                        + NUMTODSINTERVAL(3, 'SECOND'),
+                    SYSTIMESTAMP - NUMTODSINTERVAL(
+                        (v_num_days - v_day_counter) + (v_years_offset * 365), 'DAY')
+                );
+            END IF;
+
+            -- =====================================================
+            -- 5. BULK_PAYMENT_TRANSACTIONS (18 per entry)
+            -- =====================================================
+            FOR txn_counter IN 1..18 LOOP
+                INSERT INTO BULK_PAYMENT_TRANSACTIONS (
+                    BENEFICIARY_NAME, BENEFICIARY_ACCOUNT_NUMBER,
+                    IFSC, RAIL_ROAD, DEBIT_ACCOUNT_NUMBER,
+                    TRANSACTION_DATE, AMOUNT, CURRENCY,
+                    BENEFICIARY_EMAIL_ID, REMARKS, STATUS,
+                    BULK_PAYMENTS_REFERENCE_ID, FILE_ROW_INDEX,
+                    SPLIT_REFERENCE_ID, TRANSACTION_ID,
+                    APPROVAL_STATUS, UPLOAD_TXN_DATE
+                ) VALUES (
+                    CASE MOD(v_counter + txn_counter, 5)
+                        WHEN 0 THEN 'John Doe'
+                        WHEN 1 THEN 'Jane Smith'
+                        WHEN 2 THEN 'Robert Johnson'
+                        WHEN 3 THEN 'Emily Williams'
+                        ELSE 'Michael Brown'
+                    END,
+                    CASE MOD(v_counter + txn_counter, 5)
+                        WHEN 0 THEN '122334455'
+                        WHEN 1 THEN '28015545'
+                        WHEN 2 THEN '2801227'
+                        WHEN 3 THEN '343'
+                        ELSE '9876543210'
+                    END,
+                    CASE MOD(v_counter + txn_counter, 5)
+                        WHEN 0 THEN 'ABHY0065001'
+                        WHEN 1 THEN 'HDFC0000280'
+                        WHEN 2 THEN 'APMC0000003'
+                        WHEN 3 THEN 'SBIN0001234'
+                        ELSE 'ICIC0001001'
+                    END,
+                    CASE MOD(txn_counter, 2)
+                        WHEN 0 THEN 'NEFT'
+                        ELSE 'RTGS'
+                    END,
+                    '21480288055',
+                    v_transaction_date,
+                    TO_CHAR(ROUND(DBMS_RANDOM.VALUE(100, 10000), 2)),
+                    'INR',
+                    NULL,
+                    NULL,
+                    CASE MOD(v_counter, 3)
+                        WHEN 0 THEN 'PROCESSING'
+                        WHEN 1 THEN 'SENT'
+                        ELSE 'INITIATED'
+                    END,
+                    v_ref_id,
+                    txn_counter,
+                    CASE MOD(txn_counter, 2)
+                        WHEN 0 THEN v_split_ref_id
+                        ELSE LPAD(v_counter * 2, 16, '0')
+                    END,
+                    'OPT' || LPAD(v_counter * 1000 + txn_counter, 13, '0'),
+                    'APPROVED',
+                    v_transaction_date
+                );
+            END LOOP;
+
+            -- =====================================================
+            -- 6. BULK_PAYMENT_TXN_CUSTOM_VALUES (8% of transactions)
+            -- =====================================================
+            FOR rec IN (
+                SELECT ID FROM BULK_PAYMENT_TRANSACTIONS
+                WHERE BULK_PAYMENTS_REFERENCE_ID = v_ref_id
+                ORDER BY ID
+            ) LOOP
+                IF MOD(rec.ID, 100) < 8 THEN
+                    INSERT INTO BULK_PAYMENT_TXN_CUSTOM_VALUES (ID, VALUES_CUSTOM)
+                    VALUES (
+                        rec.ID,
+                        TO_CLOB('{"1":"Custom Value ' || rec.ID 
+                            || '","2":"100RS","3":"","4":"","5":""}')
+                    );
+                END IF;
+            END LOOP;
+
+            -- =====================================================
+            -- 7. BULK_PAYMENT_CUSTOM_HEADERS (69% of entries)
+            -- =====================================================
+            IF MOD(v_counter, 100) < 69 THEN
+                INSERT INTO BULK_PAYMENT_CUSTOM_HEADERS (
+                    REFERENCE_ID, CUSTOM_HEADERS
+                ) VALUES (
+                    v_ref_id,
+                    TO_CLOB('{"1":"Salary","2":"Bonus","3":"Incentive",
+                              "4":"Allowance","5":"Reimbursement"}')
+                );
+            END IF;
+
+            v_counter := v_counter + 1;
+
+        END LOOP;
+
+        -- Commit every day to avoid undo space issues
+        COMMIT;
+
+    END LOOP;
+
+    DBMS_OUTPUT.PUT_LINE('Chunk done. Total entries: ' 
+        || (v_num_days * v_num_entries_per_day));
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('Error: ' || SQLERRM);
+        RAISE;
+END;
+/
+```
+
+---
+
+## How to Run All 6 Chunks
+
+Just change these 2 lines at the top each time:
+
+| Chunk | YEARS_OFFSET | Covers |
+|-------|-------------|--------|
+| 1 | `6` | 6 years ago |
+| 2 | `5` | 5 years ago |
+| 3 | `4` | 4 years ago |
+| 4 | `3` | 3 years ago |
+| 5 | `2` | 2 years ago |
+| 6 | `1` | 1 year ago |
+
+---
+
+## Estimated Time Per Chunk
+
+| Operation | Inserts per chunk | Est. time |
+|-----------|------------------|-----------|
+| BULK_PAYMENTS | 1,331,155 | ~4 min |
+| BULK_PAYMENT_ACCOUNTS | 1,277,909 | ~4 min |
+| BULK_PAYMENT_FILES | ~2,089,713 | ~7 min |
+| BULK_PAYMENT_SPLIT_DETAILS | ~2,611,864 | ~8 min |
+| BULK_PAYMENT_TRANSACTIONS | 23,960,790 | ~80 min |
+| BULK_PAYMENT_TXN_CUSTOM_VALUES | ~1,916,863 | ~6 min |
+| BULK_PAYMENT_CUSTOM_HEADERS | ~918,497 | ~3 min |
+| **Total per chunk** | **~34M inserts** | **~112 min** |
+| **All 6 chunks** | **~204M inserts** | **~11 hours** |
+
+> ⚠️ The TRANSACTIONS loop (18 inserts × 3647 entries × 365 days) is the bottleneck. If your Oracle server has good specs (16+ GB RAM, SSD), it could be faster — maybe 6-7 hours total. If it's a shared/dev server, could be 15+ hours.
+
+---
+
+## Tips to Speed It Up
+
+```sql
+-- Run before each chunk
+ALTER SESSION DISABLE PARALLEL DML;
+ALTER TABLE BULK_PAYMENT_TRANSACTIONS NOLOGGING;
+ALTER TABLE BULK_PAYMENTS NOLOGGING;
+-- (repeat for all tables)
+
+-- Run after all chunks done
+ALTER TABLE BULK_PAYMENT_TRANSACTIONS LOGGING;
+ALTER TABLE BULK_PAYMENTS LOGGING;
+```
+
+> Also disable any triggers and indexes on these tables before running, rebuild after. That alone can **cut time by 40-50%**.

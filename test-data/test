@@ -1096,3 +1096,20 @@ EXCEPTION
         RAISE;
 END;
 /
+
+-- Identify the constraint's column(s)
+SELECT cc.column_name, c.constraint_type
+FROM   user_constraints c
+JOIN   user_cons_columns cc ON c.constraint_name = cc.constraint_name
+WHERE  c.constraint_name = 'SYS_C0011463';
+
+-- How much is already loaded, and the highest counter used
+SELECT COUNT(*) AS row_count,
+       MIN(REFERENCE_ID) AS min_ref,
+       MAX(REFERENCE_ID) AS max_ref
+FROM   BULK_PAYMENTS;
+
+-- Does counter=1's row already exist?
+SELECT REFERENCE_ID, DISPLAY_ID, CREATED_AT
+FROM   BULK_PAYMENTS
+WHERE  REFERENCE_ID = '3Ea7' || LPAD(1,10,'0') || CHR(65+MOD(1,26)) || LPAD(1,9,'0');
